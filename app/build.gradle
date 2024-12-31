@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace "com.example.imagetest"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.imagetest"
+        minSdk 28
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    } 
+}
+
+dependencies {
+    implementation(fileTree("libs"))
+    implementation("androidx.appcompat:appcompat:1.6.1")
+
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.5.1'
+    implementation 'androidx.fragment:fragment-ktx:1.5.3'
+
+    implementation("com.squareup.okhttp3:okhttp:4.10.0")
+    implementation("org.json:json:20210307")
+    implementation(libs.appcompat)
+    implementation(libs.material)
+    implementation(libs.activity)
+    implementation(libs.constraintlayout)
+
+    implementation("com.android.volley:volley:1.2.1")
+}
