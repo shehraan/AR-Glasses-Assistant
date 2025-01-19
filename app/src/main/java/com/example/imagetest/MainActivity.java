@@ -1,15 +1,11 @@
-//MainActivity.java
-
 package com.example.imagetest;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.view.View;
 import android.widget.Button;
@@ -24,9 +20,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Locale;
+
 import android.util.Log;
 
 import okhttp3.*;
@@ -41,23 +39,8 @@ public class MainActivity extends AppCompatActivity {
     private Uri imageUri;
 
     private TextToSpeech textToSpeech;
-    private SpeechRecognizer speechRecognizer;
-    private Intent intent;
 
-    private Bitmap resizeImage(Bitmap bitmap, int maxWidth, int maxHeight) {
-        int width = bitmap.getWidth();
-        int height = bitmap.getHeight();
-
-        float bitmapRatio = (float) width / (float) height;
-        if (bitmapRatio > 1) {
-            width = maxWidth;
-            height = (int) (width / bitmapRatio);
-        } else {
-            height = maxHeight;
-            width = (int) (height * bitmapRatio);
-        }
-        return Bitmap.createScaledBitmap(bitmap, width, height, true);
-    }
+    private boolean isRecording = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,40 +57,13 @@ public class MainActivity extends AppCompatActivity {
         // Initialize TextToSpeech
         textToSpeech = new TextToSpeech(getApplicationContext(), status -> {
             if (status == TextToSpeech.SUCCESS) {
-                textToSpeech.setSpeechRate(0.8f);
+                textToSpeech.setLanguage(Locale.US);
+                textToSpeech.setSpeechRate(0.9f);
                 Log.d("TTS", "TextToSpeech initialized successfully.");
             } else {
                 textToSpeech = null;
                 Log.e("TTS", "TextToSpeech initialization failed.");
             }
-        });
-
-        // Initialize SpeechRecognizer
-        intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        speechRecognizer.setRecognitionListener(new RecognitionListener() {
-            @Override
-            public void onResults(Bundle bundle) {
-                ArrayList<String> matches = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                if (matches != null && !matches.isEmpty()) {
-                    String recognizedText = matches.get(0);
-                    textInput.setText(recognizedText);
-                    if (imageUri != null) {
-                        sendToChatGPT(recognizedText, imageUri);
-                    }
-                }
-            }
-
-            @Override public void onReadyForSpeech(Bundle bundle) {}
-            @Override public void onBeginningOfSpeech() {}
-            @Override public void onRmsChanged(float v) {}
-            @Override public void onBufferReceived(byte[] bytes) {}
-            @Override public void onEndOfSpeech() {}
-            @Override public void onError(int i) {}
-            @Override public void onPartialResults(Bundle bundle) {}
-            @Override public void onEvent(int i, Bundle bundle) {}
         });
 
         // Handle image selection
@@ -117,12 +73,16 @@ public class MainActivity extends AppCompatActivity {
             startActivityForResult(intent, PICK_IMAGE_REQUEST);
         });
 
-        // Handle voice input and submission
+        // Handle audio recording with Whisper API
         submitButton.setOnClickListener(v -> {
-            if (textToSpeech != null && textToSpeech.isSpeaking()) {
-                textToSpeech.stop();
+            if (!isRecording) {
+                isRecording = true;
+                startAudioRecording();
+                submitButton.setText("Stop Recording");
             } else {
-                speechRecognizer.startListening(intent);
+                isRecording = false;
+                stopAudioRecordingAndProcess();
+                submitButton.setText("Start Recording");
             }
         });
     }
@@ -134,6 +94,85 @@ public class MainActivity extends AppCompatActivity {
             imageUri = data.getData();
             imagePreview.setImageURI(imageUri);
             imagePreview.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private MediaRecorder mediaRecorder;
+    private String audioFilePath;
+
+    private void startAudioRecording() {
+        try {
+            audioFilePath = getExternalFilesDir(null).getAbsolutePath() + "/audio.wav";
+
+            mediaRecorder = new MediaRecorder();
+            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4); // Use OutputFormat.MPEG_4 for .wav
+            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); // Use AAC encoder
+            mediaRecorder.setOutputFile(audioFilePath);
+
+            mediaRecorder.prepare();
+            mediaRecorder.start();
+            Log.d("Audio", "Recording started.");
+        } catch (IOException e) {
+            Log.e("Audio", "Recording failed: " + e.getMessage());
+        }
+    }
+
+    private void stopAudioRecordingAndProcess() {
+        if (mediaRecorder != null) {
+            mediaRecorder.stop();
+            mediaRecorder.release();
+            mediaRecorder = null;
+            Log.d("Audio", "Recording stopped.");
+            sendAudioToWhisperAPI(audioFilePath);
+        }
+    }
+
+    private void sendAudioToWhisperAPI(String audioFilePath) {
+        try {
+            // Create API request to Whisper
+            OkHttpClient client = new OkHttpClient();
+            RequestBody audioRequestBody = RequestBody.create(MediaType.parse("audio/wav"), new File(audioFilePath));
+            MultipartBody requestBody = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", "audio.wav", audioRequestBody)
+                    .addFormDataPart("model", "whisper-1")
+
+                    .build();
+
+            Request request = new Request.Builder()
+                    .url("https://api.openai.com/v1/audio/transcriptions")
+                    .post(requestBody)
+                    .addHeader("Authorization", "Bearer API-KEY")
+                    .build();
+
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    runOnUiThread(() -> outputTextBox.setText("Error: " + e.getMessage()));
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    String responseBody = response.body().string();
+                    if (response.isSuccessful()) {
+                        try {
+                            JSONObject jsonResponse = new JSONObject(responseBody);
+                            String recognizedText = jsonResponse.getString("text");
+                            runOnUiThread(() -> {
+                                textInput.setText(recognizedText);
+                                sendToChatGPT(recognizedText, imageUri);
+                            });
+                        } catch (JSONException e) {
+                            runOnUiThread(() -> outputTextBox.setText("Error parsing response: " + e.getMessage()));
+                        }
+                    } else {
+                        runOnUiThread(() -> outputTextBox.setText("Error: " + response.code() + "\n" + responseBody));
+                    }
+                }
+            });
+        } catch (Exception e) {
+            runOnUiThread(() -> outputTextBox.setText("Error: " + e.getMessage()));
         }
     }
 
@@ -178,7 +217,7 @@ public class MainActivity extends AppCompatActivity {
             Request request = new Request.Builder()
                     .url("https://api.openai.com/v1/chat/completions")
                     .post(RequestBody.create(MediaType.parse("application/json"), jsonBody.toString()))
-
+                    .addHeader("Authorization", "Bearer API-KEY")
                     .addHeader("Content-Type", "application/json")
                     .build();
 
@@ -213,5 +252,20 @@ public class MainActivity extends AppCompatActivity {
         } catch (IOException | JSONException e) {
             runOnUiThread(() -> outputTextBox.setText("Error: " + e.getMessage()));
         }
+    }
+
+    private Bitmap resizeImage(Bitmap bitmap, int maxWidth, int maxHeight) {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+
+        float bitmapRatio = (float) width / (float) height;
+        if (bitmapRatio > 1) {
+            width = maxWidth;
+            height = (int) (width / bitmapRatio);
+        } else {
+            height = maxHeight;
+            width = (int) (height * bitmapRatio);
+        }
+        return Bitmap.createScaledBitmap(bitmap, width, height, true);
     }
 }
