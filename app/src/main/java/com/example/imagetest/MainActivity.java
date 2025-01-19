@@ -143,7 +143,7 @@ public class MainActivity extends AppCompatActivity {
             Request request = new Request.Builder()
                     .url("https://api.openai.com/v1/audio/transcriptions")
                     .post(requestBody)
-                    .addHeader("Authorization", "Bearer API")
+                    .addHeader("Authorization", "Bearer API-KEY")
                     .build();
 
             client.newCall(request).enqueue(new Callback() {
@@ -217,7 +217,7 @@ public class MainActivity extends AppCompatActivity {
             Request request = new Request.Builder()
                     .url("https://api.openai.com/v1/chat/completions")
                     .post(RequestBody.create(MediaType.parse("application/json"), jsonBody.toString()))
-                    .addHeader("Authorization", "Bearer API")
+                    .addHeader("Authorization", "Bearer API-KEY")
                     .addHeader("Content-Type", "application/json")
                     .build();
 
