@@ -1,6 +1,8 @@
 package com.example.imagetest;
-//Works!!!
+
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.media.MediaPlayer;
 import android.media.MediaRecorder;
@@ -8,13 +10,19 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -27,6 +35,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Base64;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 import android.util.Log;
 
@@ -35,9 +46,11 @@ import okhttp3.*;
 public class MainActivity extends AppCompatActivity {
 
     // API Key defined as a single variable
-    private static final String API_KEY = "Bearer GPT_API";
+    private static final String API_KEY = "Bearer OPENKALA";
 
     private static final int PICK_IMAGE_REQUEST = 1;
+
+    private static final int PERMISSION_REQUEST_CODE = 123;
 
     private EditText textInput;
     private ImageView imagePreview;
@@ -52,6 +65,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        checkAndRequestPermissions();
 
         textInput = findViewById(R.id.textInput);
         imagePreview = findViewById(R.id.imagePreview);
@@ -143,7 +158,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void sendAudioToGoogleSTT(String audioFilePath) {
-        final String apiKey = "Google_API";
+        final String apiKey = "APIKALA";
         final String url = "https://speech.googleapis.com/v1/speech:recognize?key=" + apiKey;
 
         try {
@@ -230,7 +245,7 @@ public class MainActivity extends AppCompatActivity {
                         MediaType.parse("application/json"),
                         jsonBody.toString())
                 )
-                .addHeader("Authorization", "Bearer GPT_API")
+                .addHeader("Authorization", "Bearer OPENKALA")
                 .addHeader("Content-Type", "application/json")
                 .build();
 
@@ -267,7 +282,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
     private void speakWithGoogleCloudTTS(String text) {
-        final String googleTtsApiKey = "Google_API";
+        final String googleTtsApiKey = "APIKALA";
         final String ttsEndpoint = "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + googleTtsApiKey;
 
         try {
@@ -442,4 +457,30 @@ public class MainActivity extends AppCompatActivity {
         }
         return Bitmap.createScaledBitmap(bitmap, width, height, true);
     }
+
+    private void checkAndRequestPermissions() {
+        List<String> listPermissionsNeeded = new ArrayList<>();
+
+        // Check for microphone permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            listPermissionsNeeded.add(Manifest.permission.RECORD_AUDIO);
+        }
+
+        // Check for read external storage permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            listPermissionsNeeded.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        }
+
+        // If permissions are not granted, request them
+        if (!listPermissionsNeeded.isEmpty()) {
+            ActivityCompat.requestPermissions(
+                    this,
+                    listPermissionsNeeded.toArray(new String[listPermissionsNeeded.size()]),
+                    PERMISSION_REQUEST_CODE
+            );
+        }
+    }
+
 }
