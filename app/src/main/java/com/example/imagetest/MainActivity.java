@@ -4,13 +4,20 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.SurfaceTexture;
+import android.hardware.Camera; // Deprecated—but used here for in‑app capture
+import android.media.AudioFormat;
+import android.media.AudioRecord;
 import android.media.MediaPlayer;
-import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
 import android.util.Log;
+import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -33,33 +40,44 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.Base64;
-import java.util.Locale;
+import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-import android.util.Log;
-
-import okhttp3.*;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 public class MainActivity extends AppCompatActivity {
 
     // API Key defined as a single variable
-    private static final String API_KEY = "Bearer OPENKALA";
-
-    private static final int PICK_IMAGE_REQUEST = 1;
-
+    private static final String API_KEY = "Bearer chatapik";
     private static final int PERMISSION_REQUEST_CODE = 123;
+    // Threshold (in pixels) used to decide whether a gesture is a forward slide or a simple tap
+    private static final float GESTURE_THRESHOLD = 100;
 
     private EditText textInput;
     private ImageView imagePreview;
     private TextView outputTextBox;
+    // This URI (or file path) will be used for the captured image
     private Uri imageUri;
 
     private TextToSpeech textToSpeech;
 
-    private boolean isRecording = false;
+    // For audio recording using AudioRecord (WAV output)
+    private AudioRecord recorder;
+    private Thread recordingThread;
+    private boolean isRecordingAudio = false;
+    // The output file will now be a .wav file
+    private String audioFilePath;
+
+    // Variables used for global gesture detection (for glasses click)
+    private float globalInitialX = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,7 +93,7 @@ public class MainActivity extends AppCompatActivity {
         Button selectImageButton = findViewById(R.id.selectImageButton);
         Button submitButton = findViewById(R.id.submitButton);
 
-        // Initialize TextToSpeech
+        // (Optional) Initialize TextToSpeech here if needed.
         /*
         textToSpeech = new TextToSpeech(getApplicationContext(), status -> {
             if (status == TextToSpeech.SUCCESS) {
@@ -87,78 +105,282 @@ public class MainActivity extends AppCompatActivity {
                 Log.e("TTS", "TextToSpeech initialization failed.");
             }
         });
+        */
 
-         */
-
-        // Handle image selection
-        selectImageButton.setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_PICK);
-            intent.setType("image/*");
-            startActivityForResult(intent, PICK_IMAGE_REQUEST);
-        });
-
-        // Handle audio recording with Whisper API
-        submitButton.setOnClickListener(v -> {
-            if (!isRecording) {
-                isRecording = true;
-                startAudioRecording();
-                submitButton.setText("Stop Recording");
-            } else {
-                isRecording = false;
-                stopAudioRecordingAndProcess();
-                submitButton.setText("Start Recording");
+        // Remove any onClickListener for the buttons because glasses gestures will trigger the actions.
+        // Instead, set an onTouchListener on the selectImageButton to detect forward-sliding gestures.
+        selectImageButton.setOnTouchListener(new View.OnTouchListener() {
+            float initialX = 0;
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        initialX = event.getX();
+                        break;
+                    case MotionEvent.ACTION_UP:
+                        float deltaX = event.getX() - initialX;
+                        // If the X-axis movement is greater than the threshold, assume a forward-sliding gesture.
+                        if (deltaX > GESTURE_THRESHOLD) {
+                            // Only capture an image if one has not been taken yet.
+                            if (imageUri == null) {
+                                captureImageAutomatically();
+                            }
+                            return true; // Consume the gesture.
+                        }
+                        break;
+                }
+                return false;
             }
         });
+
+        // (Optional) You can also set an onClickListener as a fallback for the submitButton,
+        // but the glasses tap gesture below (in dispatchTouchEvent) will handle audio toggling.
+        submitButton.setOnClickListener(v -> toggleAudioRecording());
     }
 
+    /**
+     * Override dispatchTouchEvent to capture glasses tap gestures.
+     * A simple tap (with little X-axis movement) toggles audio recording.
+     */
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null) {
-            imageUri = data.getData();
-            imagePreview.setImageURI(imageUri);
-            imagePreview.setVisibility(View.VISIBLE);
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                globalInitialX = event.getX();
+                break;
+            case MotionEvent.ACTION_UP:
+                float deltaX = event.getX() - globalInitialX;
+                if (Math.abs(deltaX) < GESTURE_THRESHOLD) {
+                    // This is considered a tap (click) gesture from the glasses.
+                    toggleAudioRecording();
+                }
+                break;
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    /**
+     * Toggles audio recording:
+     * - If not recording, starts recording and updates the submit button text.
+     * - If already recording, stops recording, sends the audio to Google STT, and updates the text.
+     */
+    private void toggleAudioRecording() {
+        Button submitButton = findViewById(R.id.submitButton);
+        if (!isRecordingAudio) {
+            startAudioRecording();
+            submitButton.setText("Stop Recording");
+        } else {
+            stopAudioRecordingAndProcess();
+            submitButton.setText("Start Recording");
         }
     }
 
-    private MediaRecorder mediaRecorder;
-    private String audioFilePath;
+    // --- IMAGE CAPTURE (in‑app) using deprecated Camera API ---
 
-
-    private void startAudioRecording() {
+    /**
+     * Captures an image automatically within the app.
+     * Uses a dummy SurfaceTexture so no preview is shown.
+     */
+    private void captureImageAutomatically() {
+        Camera camera = Camera.open();
         try {
-            audioFilePath = getExternalFilesDir(null).getAbsolutePath() + "/audio.wav"; // Actually AAC/MP4 if not changed
-
-            mediaRecorder = new MediaRecorder();
-            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.AMR_WB);
-            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_WB);
-            mediaRecorder.setAudioSamplingRate(16000);
-// Use .amr file extension
-            audioFilePath = getExternalFilesDir(null).getAbsolutePath() + "/audio.amr";
-            mediaRecorder.setOutputFile(audioFilePath);
-
-            mediaRecorder.prepare();
-            mediaRecorder.start();
-            Log.d("Audio", "Recording started.");
+            SurfaceTexture dummySurfaceTexture = new SurfaceTexture(10);
+            camera.setPreviewTexture(dummySurfaceTexture);
+            camera.startPreview();
+            // Capture image immediately
+            camera.takePicture(null, null, new Camera.PictureCallback() {
+                @Override
+                public void onPictureTaken(byte[] data, Camera camera) {
+                    // Decode JPEG data to Bitmap
+                    Bitmap bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);
+                    runOnUiThread(() -> {
+                        imagePreview.setImageBitmap(bitmap);
+                        imagePreview.setVisibility(View.VISIBLE);
+                    });
+                    // Save the bitmap to a file for later use (e.g., when sending to ChatGPT)
+                    File imageFile = saveBitmapToFile(bitmap);
+                    if (imageFile != null) {
+                        imageUri = Uri.fromFile(imageFile);
+                    }
+                    camera.release();
+                }
+            });
         } catch (IOException e) {
-            Log.e("Audio", "Recording failed: " + e.getMessage());
+            e.printStackTrace();
+            camera.release();
+            Toast.makeText(this, "Error capturing image: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
+    /**
+     * Saves a Bitmap as a JPEG file in the app's external pictures directory.
+     *
+     * @param bitmap The Bitmap to save.
+     * @return The saved File, or null if there was an error.
+     */
+    private File saveBitmapToFile(Bitmap bitmap) {
+        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        String fileName = "captured_" + System.currentTimeMillis() + ".jpg";
+        File imageFile = new File(storageDir, fileName);
+        try (FileOutputStream fos = new FileOutputStream(imageFile)) {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos);
+            fos.flush();
+            return imageFile;
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    // --- AUDIO RECORDING using AudioRecord (WAV output) ---
+
+    /**
+     * Starts audio recording using AudioRecord.
+     * The recorded raw PCM data is written to a .wav file in a background thread.
+     */
+    private void startAudioRecording() {
+        int sampleRate = 16000; // 16 kHz
+        int channelConfig = AudioFormat.CHANNEL_IN_MONO;
+        int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+        int bufferSize = android.media.AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat);
+
+        recorder = new AudioRecord(android.media.MediaRecorder.AudioSource.MIC, sampleRate, channelConfig, audioFormat, bufferSize);
+        recorder.startRecording();
+        isRecordingAudio = true;
+        audioFilePath = getExternalFilesDir(null).getAbsolutePath() + "/audio.wav";
+        recordingThread = new Thread(() -> writeAudioDataToFile(audioFilePath, bufferSize), "AudioRecorder Thread");
+        recordingThread.start();
+        Log.d("Audio", "Recording started.");
+    }
+
+    /**
+     * Writes the raw audio data to a file and later updates the WAV header.
+     *
+     * @param filePath   The path of the file to write.
+     * @param bufferSize The size of the audio buffer.
+     */
+    private void writeAudioDataToFile(String filePath, int bufferSize) {
+        byte[] data = new byte[bufferSize];
+        File file = new File(filePath);
+        RandomAccessFile raf = null;
+        long totalAudioLen = 0;
+        try {
+            raf = new RandomAccessFile(file, "rw");
+            // Write a placeholder for the WAV header (44 bytes)
+            byte[] placeholder = new byte[44];
+            raf.write(placeholder);
+            while (isRecordingAudio) {
+                int read = recorder.read(data, 0, bufferSize);
+                if (read > 0) {
+                    raf.write(data, 0, read);
+                    totalAudioLen += read;
+                }
+            }
+            long totalDataLen = totalAudioLen + 36;
+            int sampleRate = 16000;
+            int channels = 1;
+            int byteRate = sampleRate * channels * 16 / 8;
+            // Go back and write the WAV header at the beginning of the file
+            raf.seek(0);
+            writeWavHeader(raf, totalAudioLen, totalDataLen, sampleRate, channels, byteRate);
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (raf != null) {
+                try {
+                    raf.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    /**
+     * Writes the WAV file header to the given RandomAccessFile.
+     *
+     * @param raf           The RandomAccessFile (positioned at the start).
+     * @param totalAudioLen Total length of the audio data.
+     * @param totalDataLen  Total data length (audio + header).
+     * @param sampleRate    The sample rate (e.g., 16000).
+     * @param channels      Number of channels (e.g., 1 for mono).
+     * @param byteRate      Byte rate (sampleRate * channels * bitsPerSample/8).
+     * @throws IOException If an I/O error occurs.
+     */
+    private void writeWavHeader(RandomAccessFile raf, long totalAudioLen, long totalDataLen, int sampleRate, int channels, int byteRate) throws IOException {
+        byte[] header = new byte[44];
+        header[0] = 'R';  // RIFF/WAVE header
+        header[1] = 'I';
+        header[2] = 'F';
+        header[3] = 'F';
+        header[4] = (byte) (totalDataLen & 0xff);
+        header[5] = (byte) ((totalDataLen >> 8) & 0xff);
+        header[6] = (byte) ((totalDataLen >> 16) & 0xff);
+        header[7] = (byte) ((totalDataLen >> 24) & 0xff);
+        header[8] = 'W';
+        header[9] = 'A';
+        header[10] = 'V';
+        header[11] = 'E';
+        header[12] = 'f'; // "fmt " chunk
+        header[13] = 'm';
+        header[14] = 't';
+        header[15] = ' ';
+        header[16] = 16;  // Subchunk1Size for PCM
+        header[17] = 0;
+        header[18] = 0;
+        header[19] = 0;
+        header[20] = 1;   // PCM format
+        header[21] = 0;
+        header[22] = (byte) channels;
+        header[23] = 0;
+        header[24] = (byte) (sampleRate & 0xff);
+        header[25] = (byte) ((sampleRate >> 8) & 0xff);
+        header[26] = (byte) ((sampleRate >> 16) & 0xff);
+        header[27] = (byte) ((sampleRate >> 24) & 0xff);
+        header[28] = (byte) (byteRate & 0xff);
+        header[29] = (byte) ((byteRate >> 8) & 0xff);
+        header[30] = (byte) ((byteRate >> 16) & 0xff);
+        header[31] = (byte) ((byteRate >> 24) & 0xff);
+        header[32] = (byte) (channels * 16 / 8);  // Block align
+        header[33] = 0;
+        header[34] = 16; // Bits per sample
+        header[35] = 0;
+        header[36] = 'd';
+        header[37] = 'a';
+        header[38] = 't';
+        header[39] = 'a';
+        header[40] = (byte) (totalAudioLen & 0xff);
+        header[41] = (byte) ((totalAudioLen >> 8) & 0xff);
+        header[42] = (byte) ((totalAudioLen >> 16) & 0xff);
+        header[43] = (byte) ((totalAudioLen >> 24) & 0xff);
+        raf.write(header, 0, 44);
+    }
+
+    /**
+     * Stops the audio recording, waits for the recording thread to finish,
+     * and then sends the WAV file to Google STT.
+     */
     private void stopAudioRecordingAndProcess() {
-        if (mediaRecorder != null) {
-            mediaRecorder.stop();
-            mediaRecorder.release();
-            mediaRecorder = null;
+        if (recorder != null) {
+            isRecordingAudio = false;
+            recorder.stop();
+            recorder.release();
+            recorder = null;
+            try {
+                recordingThread.join();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
             Log.d("Audio", "Recording stopped.");
-            // Send to Google STT instead of Whisper
+            // Now send the .wav file to Google STT
             sendAudioToGoogleSTT(audioFilePath);
         }
     }
 
+    // --- GOOGLE STT, CHATGPT, TTS, and Other Methods (unchanged) ---
+
     private void sendAudioToGoogleSTT(String audioFilePath) {
-        final String apiKey = "APIKALA";
+        final String apiKey = "googleapik";
         final String url = "https://speech.googleapis.com/v1/speech:recognize?key=" + apiKey;
 
         try {
@@ -172,9 +394,9 @@ public class MainActivity extends AppCompatActivity {
 
             JSONObject config = new JSONObject();
             config.put("languageCode", "en-US");
-            config.put("encoding", "AMR_WB");
+            // For WAV (LINEAR16) files, use "LINEAR16" as the encoding
+            config.put("encoding", "LINEAR16");
             config.put("sampleRateHertz", 16000);
-
 
             JSONObject audio = new JSONObject();
             audio.put("content", base64Audio);
@@ -219,8 +441,7 @@ public class MainActivity extends AppCompatActivity {
                                     sendToChatGPT(recognizedText, imageUri);
                                 });
                             } else {
-                                runOnUiThread(() ->
-                                        outputTextBox.setText("No speech recognized."));
+                                runOnUiThread(() -> outputTextBox.setText("No speech recognized."));
                             }
                         } catch (JSONException e) {
                             runOnUiThread(() ->
@@ -237,6 +458,7 @@ public class MainActivity extends AppCompatActivity {
                     outputTextBox.setText("Error (Google STT): " + e.getMessage()));
         }
     }
+
     private void sendJsonToChatGPT(JSONObject jsonBody) {
         OkHttpClient client = new OkHttpClient();
         Request request = new Request.Builder()
@@ -245,7 +467,7 @@ public class MainActivity extends AppCompatActivity {
                         MediaType.parse("application/json"),
                         jsonBody.toString())
                 )
-                .addHeader("Authorization", "Bearer OPENKALA")
+                .addHeader("Authorization", "Bearer chatapik")
                 .addHeader("Content-Type", "application/json")
                 .build();
 
@@ -266,23 +488,21 @@ public class MainActivity extends AppCompatActivity {
                                 .getJSONObject("message")
                                 .getString("content");
                         runOnUiThread(() -> {
-                            // Show text from GPT
                             outputTextBox.setText(content);
-                            // Now use Google TTS
                             speakWithGoogleCloudTTS(content);
                         });
                     } catch (JSONException e) {
                         runOnUiThread(() -> outputTextBox.setText("JSON parse error: " + e.getMessage()));
                     }
                 } else {
-                    runOnUiThread(() -> outputTextBox.setText(
-                            "Error: " + response.code() + "\n" + responseBody));
+                    runOnUiThread(() -> outputTextBox.setText("Error: " + response.code() + "\n" + responseBody));
                 }
             }
         });
     }
+
     private void speakWithGoogleCloudTTS(String text) {
-        final String googleTtsApiKey = "APIKALA";
+        final String googleTtsApiKey = "googleapik";
         final String ttsEndpoint = "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + googleTtsApiKey;
 
         try {
@@ -315,8 +535,7 @@ public class MainActivity extends AppCompatActivity {
             client.newCall(request).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    runOnUiThread(() ->
-                            outputTextBox.setText("TTS Error: " + e.getMessage()));
+                    runOnUiThread(() -> outputTextBox.setText("TTS Error: " + e.getMessage()));
                 }
 
                 @Override
@@ -327,31 +546,26 @@ public class MainActivity extends AppCompatActivity {
                             JSONObject respJson = new JSONObject(respBody);
                             String audioContent = respJson.optString("audioContent");
                             if (audioContent == null || audioContent.isEmpty()) {
-                                runOnUiThread(() ->
-                                        outputTextBox.setText("No audioContent in TTS response."));
+                                runOnUiThread(() -> outputTextBox.setText("No audioContent in TTS response."));
                                 return;
                             }
-                            // Decode base64
                             byte[] audioData = android.util.Base64.decode(audioContent, android.util.Base64.DEFAULT);
-                            // Write to temp file
                             File tempAudioFile = new File(getCacheDir(), "ttsOutput.mp3");
-                            FileOutputStream fos = new FileOutputStream(tempAudioFile);
-                            fos.write(audioData);
-                            fos.close();
+                            try (FileOutputStream fos = new FileOutputStream(tempAudioFile)) {
+                                fos.write(audioData);
+                                fos.flush();
+                            }
                             runOnUiThread(() -> playMp3File(tempAudioFile));
                         } catch (JSONException e) {
-                            runOnUiThread(() ->
-                                    outputTextBox.setText("JSON parse error in TTS: " + e.getMessage()));
+                            runOnUiThread(() -> outputTextBox.setText("JSON parse error in TTS: " + e.getMessage()));
                         }
                     } else {
-                        runOnUiThread(() ->
-                                outputTextBox.setText("TTS Error: " + response.code() + "\n" + respBody));
+                        runOnUiThread(() -> outputTextBox.setText("TTS Error: " + response.code() + "\n" + respBody));
                     }
                 }
             });
         } catch (JSONException e) {
-            runOnUiThread(() ->
-                    outputTextBox.setText("TTS JSON error: " + e.getMessage()));
+            runOnUiThread(() -> outputTextBox.setText("TTS JSON error: " + e.getMessage()));
         }
     }
 
@@ -369,10 +583,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendToChatGPT(String text, Uri imageUri) {
         try {
-            // 1. If imageUri is null, either skip or handle differently
             if (imageUri == null) {
-                // Option A: Just send text without an image
-                // Construct JSON for text only
                 JSONObject textContent = new JSONObject();
                 textContent.put("type", "text");
                 textContent.put("text", text);
@@ -391,24 +602,17 @@ public class MainActivity extends AppCompatActivity {
                 jsonBody.put("model", "gpt-4o");
                 jsonBody.put("messages", messages);
 
-                // Then do the OkHttp request just like you were, but skipping the image part
                 sendJsonToChatGPT(jsonBody);
                 return;
             }
 
-            // 2. Otherwise, the user selected an image, so proceed
-            Bitmap bitmap = MediaStore.Images.Media.getBitmap(
-                    this.getContentResolver(),
-                    imageUri
-            );
+            Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             Bitmap resizedBitmap = resizeImage(bitmap, 400, 400);
             resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 50, outputStream);
 
-            String base64Image = android.util.Base64
-                    .encodeToString(outputStream.toByteArray(), android.util.Base64.NO_WRAP);
+            String base64Image = android.util.Base64.encodeToString(outputStream.toByteArray(), android.util.Base64.NO_WRAP);
 
-            // 3. Build the JSON with both text and image
             JSONObject imageObject = new JSONObject();
             imageObject.put("url", "data:image/jpeg;base64," + base64Image);
 
@@ -435,7 +639,6 @@ public class MainActivity extends AppCompatActivity {
             jsonBody.put("model", "gpt-4o");
             jsonBody.put("messages", messages);
 
-            // 4. Send to ChatGPT
             sendJsonToChatGPT(jsonBody);
 
         } catch (IOException | JSONException e) {
@@ -447,7 +650,7 @@ public class MainActivity extends AppCompatActivity {
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
 
-        float bitmapRatio = (float) width / (float) height;
+        float bitmapRatio = (float) width / height;
         if (bitmapRatio > 1) {
             width = maxWidth;
             height = (int) (width / bitmapRatio);
@@ -458,29 +661,58 @@ public class MainActivity extends AppCompatActivity {
         return Bitmap.createScaledBitmap(bitmap, width, height, true);
     }
 
+    // --- PERMISSION CHECKING ---
+
     private void checkAndRequestPermissions() {
         List<String> listPermissionsNeeded = new ArrayList<>();
 
-        // Check for microphone permission
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             listPermissionsNeeded.add(Manifest.permission.RECORD_AUDIO);
         }
 
-        // Check for read external storage permission
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             listPermissionsNeeded.add(Manifest.permission.READ_EXTERNAL_STORAGE);
         }
 
-        // If permissions are not granted, request them
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            listPermissionsNeeded.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            listPermissionsNeeded.add(Manifest.permission.CAMERA);
+        }
+
         if (!listPermissionsNeeded.isEmpty()) {
             ActivityCompat.requestPermissions(
                     this,
-                    listPermissionsNeeded.toArray(new String[listPermissionsNeeded.size()]),
+                    listPermissionsNeeded.toArray(new String[0]),
                     PERMISSION_REQUEST_CODE
             );
         }
     }
 
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            boolean allGranted = true;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+            if (!allGranted) {
+                Toast.makeText(this,
+                        "Some permissions are not granted. The app may not work properly.",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+    }
 }
