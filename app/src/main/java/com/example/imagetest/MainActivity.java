@@ -59,7 +59,7 @@ import okhttp3.Response;
 public class MainActivity extends AppCompatActivity {
 
     // API Key defined as a single variable
-    private static final String API_KEY = "Bearer chatapik";
+    private static final String API_KEY = "Bearer CHATAPIK";
     private static final int PERMISSION_REQUEST_CODE = 123;
 
     // UI Elements
@@ -155,7 +155,7 @@ public class MainActivity extends AppCompatActivity {
     private void toggleAudioRecording() {
         if (!isRecordingAudio) {
             startAudioRecording();
-            submitButton.setText("Stop Recording");
+            submitButton.setText("End Message");
         } else {
             stopAudioRecordingAndProcess();
             submitButton.setText("Start Recording");
@@ -391,7 +391,7 @@ public class MainActivity extends AppCompatActivity {
     // --- GOOGLE STT, CHATGPT, TTS, and OTHER METHODS (unchanged) ---
 
     private void sendAudioToGoogleSTT(String audioFilePath) {
-        final String apiKey = "googleapik";
+        final String apiKey = "GAPIK";
         final String url = "https://speech.googleapis.com/v1/speech:recognize?key=" + apiKey;
 
         try {
@@ -478,7 +478,7 @@ public class MainActivity extends AppCompatActivity {
                         MediaType.parse("application/json"),
                         jsonBody.toString())
                 )
-                .addHeader("Authorization", "Bearer chatapik")
+                .addHeader("Authorization", "Bearer CHATAPIK")
                 .addHeader("Content-Type", "application/json")
                 .build();
 
@@ -513,7 +513,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void speakWithGoogleCloudTTS(String text) {
-        final String googleTtsApiKey = "googleapik";
+        final String googleTtsApiKey = "GAPIK";
         final String ttsEndpoint = "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + googleTtsApiKey;
 
         try {
