@@ -1,8 +1,8 @@
 <!-- activity_main.xml -->
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:orientation="vertical"
     android:padding="16dp"
     android:background="#000000">
@@ -17,21 +17,21 @@
         android:textColor="@android:color/white"/>
 
     <!-- Image Picker -->
-    <Button
+    <!--<Button
         android:id="@+id/selectImageButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Select Image" />
+        android:text="Select Image" />-->
 
-    <!--  <androidx.appcompat.widget.AppCompatButton
-        android:id="@+id/submitButton"
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/selectImageButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Ask with voice"
+        android:text="Triple-tap to get audio with image, then single tap to stop recording.\n\nONLY single-tap to start/stop recording audio without image"
         android:background="#000000"
         android:textColor="#FFFFFF"
         app:backgroundTint="#000000" />
-        -->
+
 
     <!-- Image Preview -->
     <ImageView

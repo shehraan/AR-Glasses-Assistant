@@ -6,7 +6,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
-import android.hardware.Camera; // Deprecated—but used here for in‑app capture
+import android.hardware.Camera; // Deprecated—but used here for in-app capture
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaPlayer;
@@ -16,6 +16,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
@@ -30,6 +31,8 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import com.rayneo.arsdk.android.touch.TempleAction;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -58,40 +61,53 @@ public class MainActivity extends AppCompatActivity {
     // API Key defined as a single variable
     private static final String API_KEY = "Bearer chatapik";
     private static final int PERMISSION_REQUEST_CODE = 123;
-    // Threshold (in pixels) used to decide whether a gesture is a forward slide or a simple tap
-    private static final float GESTURE_THRESHOLD = 100;
 
+    // UI Elements
     private EditText textInput;
     private ImageView imagePreview;
     private TextView outputTextBox;
-    // This URI (or file path) will be used for the captured image
+    private Button selectImageButton;
+    private Button submitButton;
+    // This Uri will be used to hold the captured image’s location (if any)
     private Uri imageUri;
 
     private TextToSpeech textToSpeech;
 
-    // For audio recording using AudioRecord (WAV output)
+    // For audio recording using AudioRecord (for WAV output)
     private AudioRecord recorder;
     private Thread recordingThread;
     private boolean isRecordingAudio = false;
-    // The output file will now be a .wav file
+    // The output WAV file path
     private String audioFilePath;
 
-    // Variables used for global gesture detection (for glasses click)
-    private float globalInitialX = 0;
+    // GestureDetector to capture single and double tap gestures from the glasses
+    private GestureDetector gestureDetector;
+
+    protected void onTempleAction(TempleAction action) {
+        if (action instanceof TempleAction.DoubleClick) {
+            // Instead of exiting the app, capture an image.
+            captureImageAutomatically();
+            // Do not call super, so finish() is not triggered.
+        } else {
+            finish();
+        }
+    }
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        // Request necessary permissions
         checkAndRequestPermissions();
 
+        // Initialize UI elements (store buttons as fields so we can update them from gesture callbacks)
         textInput = findViewById(R.id.textInput);
         imagePreview = findViewById(R.id.imagePreview);
         outputTextBox = findViewById(R.id.outputTextBox);
-
-        Button selectImageButton = findViewById(R.id.selectImageButton);
-        Button submitButton = findViewById(R.id.submitButton);
+        selectImageButton = findViewById(R.id.selectImageButton);
+        submitButton = findViewById(R.id.submitButton);
 
         // (Optional) Initialize TextToSpeech here if needed.
         /*
@@ -107,65 +123,36 @@ public class MainActivity extends AppCompatActivity {
         });
         */
 
-        // Remove any onClickListener for the buttons because glasses gestures will trigger the actions.
-        // Instead, set an onTouchListener on the selectImageButton to detect forward-sliding gestures.
-        selectImageButton.setOnTouchListener(new View.OnTouchListener() {
-            float initialX = 0;
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        initialX = event.getX();
-                        break;
-                    case MotionEvent.ACTION_UP:
-                        float deltaX = event.getX() - initialX;
-                        // If the X-axis movement is greater than the threshold, assume a forward-sliding gesture.
-                        if (deltaX > GESTURE_THRESHOLD) {
-                            // Only capture an image if one has not been taken yet.
-                            if (imageUri == null) {
-                                captureImageAutomatically();
-                            }
-                            return true; // Consume the gesture.
-                        }
-                        break;
-                }
-                return false;
+        // Set up button onClick listeners (in case a user touches the screen directly)
+        selectImageButton.setOnClickListener(v -> {
+            // Only allow image capture if audio recording is not in progress
+            if (!isRecordingAudio) {
+                captureImageAutomatically();
+            } else {
+                Toast.makeText(MainActivity.this, "Stop recording before capturing an image", Toast.LENGTH_SHORT).show();
             }
         });
 
-        // (Optional) You can also set an onClickListener as a fallback for the submitButton,
-        // but the glasses tap gesture below (in dispatchTouchEvent) will handle audio toggling.
         submitButton.setOnClickListener(v -> toggleAudioRecording());
+
+        // Initialize our gesture detector to listen for glasses tap gestures
+        gestureDetector = new GestureDetector(this, new MyGestureListener());
     }
 
-    /**
-     * Override dispatchTouchEvent to capture glasses tap gestures.
-     * A simple tap (with little X-axis movement) toggles audio recording.
-     */
+    // Override onTouchEvent so that glasses' TP events can be processed by our gesture detector.
     @Override
-    public boolean dispatchTouchEvent(MotionEvent event) {
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                globalInitialX = event.getX();
-                break;
-            case MotionEvent.ACTION_UP:
-                float deltaX = event.getX() - globalInitialX;
-                if (Math.abs(deltaX) < GESTURE_THRESHOLD) {
-                    // This is considered a tap (click) gesture from the glasses.
-                    toggleAudioRecording();
-                }
-                break;
+    public boolean onTouchEvent(MotionEvent event) {
+        if (gestureDetector != null) {
+            gestureDetector.onTouchEvent(event);
         }
-        return super.dispatchTouchEvent(event);
+        return super.onTouchEvent(event);
     }
 
     /**
-     * Toggles audio recording:
-     * - If not recording, starts recording and updates the submit button text.
-     * - If already recording, stops recording, sends the audio to Google STT, and updates the text.
+     * Toggles audio recording. If not recording, starts recording and changes button text.
+     * If already recording, stops recording and processes the audio.
      */
     private void toggleAudioRecording() {
-        Button submitButton = findViewById(R.id.submitButton);
         if (!isRecordingAudio) {
             startAudioRecording();
             submitButton.setText("Stop Recording");
@@ -174,6 +161,30 @@ public class MainActivity extends AppCompatActivity {
             submitButton.setText("Start Recording");
         }
     }
+
+    // --- GESTURE DETECTION ---
+
+    /**
+     * A custom gesture listener to detect single and double taps.
+     */
+    private class MyGestureListener extends GestureDetector.SimpleOnGestureListener {
+        @Override
+        public boolean onSingleTapConfirmed(MotionEvent e) {
+            toggleAudioRecording();
+            return true; // Consume the event.
+        }
+
+        @Override
+        public boolean onDoubleTap(MotionEvent e) {
+            if (!isRecordingAudio) {
+                captureImageAutomatically();
+            } else {
+                Toast.makeText(MainActivity.this, "Stop recording before capturing an image", Toast.LENGTH_SHORT).show();
+            }
+            return true; // This should consume the event so no default action occurs.
+        }
+    }
+
 
     // --- IMAGE CAPTURE (in‑app) using deprecated Camera API ---
 
@@ -242,7 +253,7 @@ public class MainActivity extends AppCompatActivity {
         int sampleRate = 16000; // 16 kHz
         int channelConfig = AudioFormat.CHANNEL_IN_MONO;
         int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
-        int bufferSize = android.media.AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat);
+        int bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat);
 
         recorder = new AudioRecord(android.media.MediaRecorder.AudioSource.MIC, sampleRate, channelConfig, audioFormat, bufferSize);
         recorder.startRecording();
@@ -377,7 +388,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // --- GOOGLE STT, CHATGPT, TTS, and Other Methods (unchanged) ---
+    // --- GOOGLE STT, CHATGPT, TTS, and OTHER METHODS (unchanged) ---
 
     private void sendAudioToGoogleSTT(String audioFilePath) {
         final String apiKey = "googleapik";
@@ -584,6 +595,7 @@ public class MainActivity extends AppCompatActivity {
     private void sendToChatGPT(String text, Uri imageUri) {
         try {
             if (imageUri == null) {
+                // Construct JSON for text only
                 JSONObject textContent = new JSONObject();
                 textContent.put("type", "text");
                 textContent.put("text", text);
@@ -606,6 +618,7 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
+            // Otherwise, process the image as well as text.
             Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             Bitmap resizedBitmap = resizeImage(bitmap, 400, 400);
