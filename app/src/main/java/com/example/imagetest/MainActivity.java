@@ -1,5 +1,5 @@
 package com.example.imagetest;
-//WORKING
+//WORKING NOW
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -59,7 +59,7 @@ import okhttp3.Response;
 public class MainActivity extends AppCompatActivity {
 
     // API Key defined as a single variable
-    private static final String API_KEY = "Bearer A";
+    private static final String API_KEY = "Bearer API:kmcts32Wtk13XcB6pMpJDYBRLyEmWPIvyuDHBtjkzcywa5boOjh9_YTSf_cyyV1BE31xSXpddzT3BlbkFJRnPcDY0MUHsmJRHua3qC2thvLOJFyPXaSY28B5ogIjPJnjn38VtHnJyM9-YndPlTbOxcRsj5AA";
     private static final int PERMISSION_REQUEST_CODE = 123;
 
     // UI Elements
@@ -155,7 +155,7 @@ public class MainActivity extends AppCompatActivity {
     private void toggleAudioRecording() {
         if (!isRecordingAudio) {
             startAudioRecording();
-            submitButton.setText("End Message");
+            submitButton.setText("Speak and Wait");
         } else {
             stopAudioRecordingAndProcess();
             submitButton.setText("Start Recording");
@@ -167,10 +167,53 @@ public class MainActivity extends AppCompatActivity {
     /**
      * A custom gesture listener to detect single and double taps.
      */
+    private void captureImageAutomaticallyAndStartRecording() {
+        Camera camera = Camera.open();
+        try {
+            SurfaceTexture dummySurfaceTexture = new SurfaceTexture(10);
+            camera.setPreviewTexture(dummySurfaceTexture);
+            camera.startPreview();
+
+            camera.takePicture(null, null, new Camera.PictureCallback() {
+                @Override
+                public void onPictureTaken(byte[] data, Camera camera) {
+                    Bitmap bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);
+                    runOnUiThread(() -> {
+                        imagePreview.setImageBitmap(bitmap);
+                        imagePreview.setVisibility(View.VISIBLE);
+                    });
+
+                    // Save the bitmap to a file for later use (for GPT)
+                    File imageFile = saveBitmapToFile(bitmap);
+                    if (imageFile != null) {
+                        imageUri = Uri.fromFile(imageFile);
+                    }
+
+                    // Release camera immediately after use
+                    camera.release();
+
+                    // ✅ Immediately start recording after capturing the image
+                    startAudioRecording();
+                    submitButton.setText("Speak and Wait");
+                }
+            });
+        } catch (IOException e) {
+            e.printStackTrace();
+            camera.release();
+            Toast.makeText(this, "Error capturing image: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
     private class MyGestureListener extends GestureDetector.SimpleOnGestureListener {
         @Override
         public boolean onSingleTapConfirmed(MotionEvent e) {
-            toggleAudioRecording();
+            if (imageUri == null) {
+                // Capture image first, then start recording after it's done
+                captureImageAutomaticallyAndStartRecording();
+            } else {
+                // If image is already captured, just start recording
+                toggleAudioRecording();
+            }
             return true; // Consume the event.
         }
 
@@ -259,6 +302,7 @@ public class MainActivity extends AppCompatActivity {
         recorder.startRecording();
         isRecordingAudio = true;
         audioFilePath = getExternalFilesDir(null).getAbsolutePath() + "/audio.wav";
+
         recordingThread = new Thread(() -> writeAudioDataToFile(audioFilePath, bufferSize), "AudioRecorder Thread");
         recordingThread.start();
         Log.d("Audio", "Recording started.");
@@ -275,23 +319,44 @@ public class MainActivity extends AppCompatActivity {
         File file = new File(filePath);
         RandomAccessFile raf = null;
         long totalAudioLen = 0;
+
+        final int silenceThreshold = 200; // Adjust this threshold as necessary
+        final int silenceLimit = 1000; // milliseconds of silence to detect stop speaking
+        long silenceStart = -1;
+
         try {
             raf = new RandomAccessFile(file, "rw");
-            // Write a placeholder for the WAV header (44 bytes)
             byte[] placeholder = new byte[44];
             raf.write(placeholder);
+
             while (isRecordingAudio) {
                 int read = recorder.read(data, 0, bufferSize);
                 if (read > 0) {
                     raf.write(data, 0, read);
                     totalAudioLen += read;
+
+                    // Check amplitude to detect silence
+                    boolean silent = isSilent(data, read, silenceThreshold);
+                    if (silent) {
+                        if (silenceStart == -1) {
+                            silenceStart = System.currentTimeMillis();
+                        } else {
+                            long silenceDuration = System.currentTimeMillis() - silenceStart;
+                            if (silenceDuration >= silenceLimit) {
+                                // Stop recording after sustained silence
+                                runOnUiThread(this::stopAudioRecordingAndProcess);
+                            }
+                        }
+                    } else {
+                        silenceStart = -1; // reset silence timer if voice detected again
+                    }
                 }
             }
+
             long totalDataLen = totalAudioLen + 36;
             int sampleRate = 16000;
             int channels = 1;
             int byteRate = sampleRate * channels * 16 / 8;
-            // Go back and write the WAV header at the beginning of the file
             raf.seek(0);
             writeWavHeader(raf, totalAudioLen, totalDataLen, sampleRate, channels, byteRate);
         } catch (IOException e) {
@@ -305,6 +370,19 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         }
+    }
+
+    /**
+     * Simple function to check if audio chunk is silent based on amplitude
+     */
+    private boolean isSilent(byte[] audioData, int readBytes, int silenceThreshold) {
+        for (int i = 0; i < readBytes; i += 2) {
+            short amplitude = (short) ((audioData[i] & 0xff) | (audioData[i + 1] << 8));
+            if (Math.abs(amplitude) > silenceThreshold) {
+                return false; // Detected sound above threshold
+            }
+        }
+        return true; // Detected silence
     }
 
     /**
@@ -391,7 +469,7 @@ public class MainActivity extends AppCompatActivity {
     // --- GOOGLE STT, CHATGPT, TTS, and OTHER METHODS (unchanged) ---
 
     private void sendAudioToGoogleSTT(String audioFilePath) {
-        final String apiKey = "";
+        final String apiKey = "API:BihdiUuVcGYxtwLdC2vbU6uksNRERnBAg";
         final String url = "https://speech.googleapis.com/v1/speech:recognize?key=" + apiKey;
 
         try {
@@ -478,7 +556,7 @@ public class MainActivity extends AppCompatActivity {
                         MediaType.parse("application/json"),
                         jsonBody.toString())
                 )
-                .addHeader("Authorization", "Bearer
+                .addHeader("Authorization", "Bearer API:kmcts32Wtk13XcB6pMpJDYBRLyEmWPIvyuDHBtjkzcywa5boOjh9_YTSf_cyyV1BE31xSXpddzT3BlbkFJRnPcDY0MUHsmJRHua3qC2thvLOJFyPXaSY28B5ogIjPJnjn38VtHnJyM9-YndPlTbOxcRsj5AA")
                 .addHeader("Content-Type", "application/json")
                 .build();
 
@@ -513,7 +591,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void speakWithGoogleCloudTTS(String text) {
-        final String googleTtsApiKey = "";
+        final String googleTtsApiKey = "API:BihdiUuVcGYxtwLdC2vbU6uksNRERnBAg";
         final String ttsEndpoint = "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + googleTtsApiKey;
 
         try {
