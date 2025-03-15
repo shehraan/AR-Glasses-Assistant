@@ -1,5 +1,5 @@
 package com.example.imagetest;
-
+//WORKING
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -59,7 +59,7 @@ import okhttp3.Response;
 public class MainActivity extends AppCompatActivity {
 
     // API Key defined as a single variable
-    private static final String API_KEY = "Bearer CHATAPIK";
+    private static final String API_KEY = "Bearer A";
     private static final int PERMISSION_REQUEST_CODE = 123;
 
     // UI Elements
@@ -391,7 +391,7 @@ public class MainActivity extends AppCompatActivity {
     // --- GOOGLE STT, CHATGPT, TTS, and OTHER METHODS (unchanged) ---
 
     private void sendAudioToGoogleSTT(String audioFilePath) {
-        final String apiKey = "GAPIK";
+        final String apiKey = "";
         final String url = "https://speech.googleapis.com/v1/speech:recognize?key=" + apiKey;
 
         try {
@@ -404,7 +404,7 @@ public class MainActivity extends AppCompatActivity {
             String base64Audio = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP);
 
             JSONObject config = new JSONObject();
-            config.put("languageCode", "en-US");
+            config.put("languageCode", "en-CA");
             // For WAV (LINEAR16) files, use "LINEAR16" as the encoding
             config.put("encoding", "LINEAR16");
             config.put("sampleRateHertz", 16000);
@@ -478,7 +478,7 @@ public class MainActivity extends AppCompatActivity {
                         MediaType.parse("application/json"),
                         jsonBody.toString())
                 )
-                .addHeader("Authorization", "Bearer CHATAPIK")
+                .addHeader("Authorization", "Bearer
                 .addHeader("Content-Type", "application/json")
                 .build();
 
@@ -513,7 +513,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void speakWithGoogleCloudTTS(String text) {
-        final String googleTtsApiKey = "GAPIK";
+        final String googleTtsApiKey = "";
         final String ttsEndpoint = "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + googleTtsApiKey;
 
         try {
@@ -521,7 +521,7 @@ public class MainActivity extends AppCompatActivity {
             inputObj.put("text", text);
 
             JSONObject voiceObj = new JSONObject();
-            voiceObj.put("languageCode", "en-US");
+            voiceObj.put("languageCode", "en-CA");
             voiceObj.put("ssmlGender", "FEMALE");
 
             JSONObject audioConfigObj = new JSONObject();

@@ -27,7 +27,7 @@
         android:id="@+id/selectImageButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Triple-tap to get audio with image, then single tap to end message.\n\nONLY single-tap to start/stop audio message without image"
+        android:text="Say 'Hey Chat' to get started"
         android:background="#000000"
         android:textColor="#FFFFFF"
         app:backgroundTint="#000000" />
