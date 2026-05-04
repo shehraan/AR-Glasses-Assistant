@@ -136,16 +136,12 @@ The app will display the AI response as text and read it aloud through the speak
 
 ---
 
-## Resume — STAR Description
+## Resume Bullets
 
-> Copy the block below directly into your resume or LinkedIn project section.
+> Copy the points below directly into your resume or LinkedIn project section.
 
 **AR Glasses AI Vision Assistant** | Android · Java · GPT-4o · Google Cloud APIs
 
-**Situation:** Existing voice assistants like Siri and Google Assistant lack visual context — they can only respond to what you *say*, not what you *see*, making them unhelpful for real-world, hands-free tasks like identifying objects, reading labels, or getting guidance while working.
-
-**Task:** Design and build a fully hands-free AI assistant for AR glasses that combines live camera input with voice queries to deliver spoken, context-aware answers — without the user ever touching their phone.
-
-**Action:** Developed an Android app in Java that integrates a multimodal AI pipeline: captured images via the device camera (Rayneo AR SDK + Android Camera API), recorded voice queries as 16-bit PCM WAV audio using `AudioRecord` with automatic silence detection, transcribed speech to text using the Google Cloud Speech-to-Text API, sent the combined voice transcript and image (encoded as base64) to OpenAI GPT-4o for visual reasoning, and delivered the AI response as natural speech through Google Cloud Text-to-Speech. Implemented gesture-based controls using `GestureDetector` and the AR glasses' temple touch sensor for a fully hands-free experience.
-
-**Result:** Delivered a working end-to-end AR assistant capable of answering questions about the user's visual environment in real time, demonstrating practical integration of multimodal AI (vision + language), cloud speech APIs, and custom AR hardware — all within a single lightweight Android app.
+- Built an AR glasses AI assistant in Java (Android) that captures live camera images and voice queries hands-free, sending multimodal input to OpenAI GPT-4o for real-time, context-aware spoken responses
+- Integrated Google Cloud Speech-to-Text and Text-to-Speech APIs with custom 16-bit PCM WAV audio recording and automatic silence detection, enabling a fully voice-driven interaction loop
+- Implemented hands-free gesture controls using Android's `GestureDetector` and the Rayneo AR SDK's temple touch sensor, mapping taps to image capture and voice recording for a seamless eyes-up experience
